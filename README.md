@@ -1,6 +1,6 @@
 # 🏃‍♂️ RaceDay 3 - Full-Stack Database & API System
 
-![RaceDay Database CI/CD](https://github.com/YOUR_USERNAME/RaceDay3/actions/workflows/raceday-ci.yml/badge.svg)
+![RaceDay Database CI/CD](workflow.png)
 
 
 ## 📌 Executive Overview
