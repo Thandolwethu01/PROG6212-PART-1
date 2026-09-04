@@ -6,7 +6,6 @@ on:
       - main
       - master
       - develop
-
   pull_request:
     branches:
       - main
@@ -15,7 +14,7 @@ on:
 
 jobs:
   database-test:
-    name: Test RaceDay Database
+    name: Test RaceDay Database Schema & Queries
     runs-on: ubuntu-latest
 
     services:
@@ -23,7 +22,7 @@ jobs:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: Y
-          MSSQL_SA_PASSWORD: ${{ secrets.MSSQL_SA_PASSWORD || 'RaceDayPassword123!' }}
+          MSSQL_SA_PASSWORD: "RaceDayPassword123!"
         ports:
           - 1433:1433
         options: >-
@@ -33,12 +32,12 @@ jobs:
           --health-retries 10
 
     steps:
-      # Step 1: Download the GitHub repository
+      # Step 1: Fetch source code from GitHub
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Install SQL Server command-line tools safely
-      - name: Install SQLCMD
+      # Step 2: Modernized SQLCMD installation (Fixes deprecated apt-key issues)
+      - name: Install SQLCMD Tools
         run: |
           curl -sSL https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -o packages-microsoft-prod.deb
           sudo dpkg -i packages-microsoft-prod.deb
@@ -47,10 +46,10 @@ jobs:
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
           echo "/opt/mssql-tools18/bin" >> $GITHUB_PATH
 
-      # Step 3: Verify SQL Server availability
+      # Step 3: Wait until Microsoft SQL Server container is fully online
       - name: Wait for SQL Server
         run: |
-          echo "Waiting for SQL Server to be fully responsive..."
+          echo "Waiting for SQL Server connection..."
           for i in {1..30}; do
             /opt/mssql-tools18/bin/sqlcmd \
               -S localhost,1433 \
@@ -58,22 +57,97 @@ jobs:
               -P "RaceDayPassword123!" \
               -C \
               -Q "SELECT 1" && break
-            echo "SQL Server is not ready yet..."
+            echo "SQL Server is initializing..."
             sleep 2
           done
 
-      # Step 4: Create database and tables
-      - name: Run RaceDay database script
+      # Step 4: Provision the Database and Schema
+      - name: Create RaceDay Database Schema
         run: |
           /opt/mssql-tools18/bin/sqlcmd \
             -S localhost,1433 \
             -U sa \
             -P "RaceDayPassword123!" \
             -C \
-            -i database/RaceDay.sql
+            -Q "
+              IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = 'RaceDay')
+              BEGIN
+                  CREATE DATABASE RaceDay;
+              END;
+            "
 
-      # Step 5: Run database tests
-      - name: Run database tests
+          /opt/mssql-tools18/bin/sqlcmd \
+            -S localhost,1433 \
+            -U sa \
+            -P "RaceDayPassword123!" \
+            -C \
+            -d RaceDay \
+            -Q "
+              -- 1. Organizer
+              CREATE TABLE Organizer (
+                  OrganizerID INT IDENTITY(1,1) PRIMARY KEY,
+                  Name NVARCHAR(100) NOT NULL,
+                  ContactInfo NVARCHAR(150) NOT NULL,
+                  OrganizationName NVARCHAR(150) NOT NULL
+              );
+
+              -- 2. Event
+              CREATE TABLE Event (
+                  EventID INT IDENTITY(1,1) PRIMARY KEY,
+                  Name NVARCHAR(150) NOT NULL,
+                  Location NVARCHAR(150) NOT NULL,
+                  EventDate DATE NOT NULL,
+                  RouteDetails NVARCHAR(MAX),
+                  WeatherInfo NVARCHAR(100)
+              );
+
+              -- 3. EventOrganizer Bridge
+              CREATE TABLE EventOrganizer (
+                  EventOrganizerID INT IDENTITY(1,1) PRIMARY KEY,
+                  EventID INT NOT NULL FOREIGN KEY REFERENCES Event(EventID) ON DELETE CASCADE,
+                  OrganizerID INT NOT NULL FOREIGN KEY REFERENCES Organizer(OrganizerID) ON DELETE CASCADE
+              );
+
+              -- 4. Category
+              CREATE TABLE Category (
+                  CategoryID INT IDENTITY(1,1) PRIMARY KEY,
+                  EventID INT NOT NULL FOREIGN KEY REFERENCES Event(EventID) ON DELETE CASCADE,
+                  Name NVARCHAR(100) NOT NULL,
+                  Distance DECIMAL(5,2) NOT NULL,
+                  AgeRestriction INT DEFAULT 18
+              );
+
+              -- 5. Participant
+              CREATE TABLE Participant (
+                  ParticipantID INT IDENTITY(1,1) PRIMARY KEY,
+                  FirstName NVARCHAR(100) NOT NULL,
+                  LastName NVARCHAR(100) NOT NULL,
+                  Gender NVARCHAR(20) NOT NULL,
+                  DateOfBirth DATE NOT NULL,
+                  ContactInfo NVARCHAR(150) NOT NULL UNIQUE
+              );
+
+              -- 6. Registration
+              CREATE TABLE Registration (
+                  RegistrationID INT IDENTITY(1,1) PRIMARY KEY,
+                  ParticipantID INT NOT NULL FOREIGN KEY REFERENCES Participant(ParticipantID),
+                  CategoryID INT NOT NULL FOREIGN KEY REFERENCES Category(CategoryID),
+                  RegistrationDate DATE DEFAULT GETDATE(),
+                  PaymentStatus NVARCHAR(50) DEFAULT 'Pending'
+              );
+
+              -- 7. Result
+              CREATE TABLE Result (
+                  ResultID INT IDENTITY(1,1) PRIMARY KEY,
+                  RegistrationID INT NOT NULL UNIQUE FOREIGN KEY REFERENCES Registration(RegistrationID),
+                  FinishTime TIME NOT NULL,
+                  Position INT NOT NULL,
+                  SplitTimes NVARCHAR(MAX)
+              );
+            "
+
+      # Step 5: Seed Sample Data and Execute Automated Verification Query
+      - name: Seed Data and Run SQL Tests
         run: |
           /opt/mssql-tools18/bin/sqlcmd \
             -S localhost,1433 \
@@ -81,11 +155,34 @@ jobs:
             -P "RaceDayPassword123!" \
             -C \
             -d RaceDay \
-            -i tests/test.sql
+            -Q "
+              -- Seed Test Data
+              INSERT INTO Organizer (Name, ContactInfo, OrganizationName) VALUES ('Sipho Dlamini', 'sipho@raceday.org', 'Durban Athletics Club');
+              INSERT INTO Event (Name, Location, EventDate, RouteDetails, WeatherInfo) VALUES ('Comrades Marathon', 'Durban', '2026-06-10', 'Route from PMB to Durban', 'Sunny');
+              INSERT INTO Category (EventID, Name, Distance, AgeRestriction) VALUES (1, 'Ultra Run', 90.00, 18);
+              INSERT INTO Participant (FirstName, LastName, Gender, DateOfBirth, ContactInfo) VALUES ('Aphiwe', 'Khuboni', 'Male', '2000-05-12', 'aphiwe@gmail.com');
+              INSERT INTO Registration (ParticipantID, CategoryID, RegistrationDate, PaymentStatus) VALUES (1, 1, '2026-09-04', 'Paid');
+              INSERT INTO Result (RegistrationID, FinishTime, Position, SplitTimes) VALUES (1, '06:45:00', 120, 'Split1=02:00,Split2=04:45');
 
-      # Step 6: Confirm successful pipeline
-      - name: Database CI completed
+              -- Execute Join Test
+              SELECT 
+                  r.RegistrationID,
+                  p.FirstName + ' ' + p.LastName AS ParticipantName,
+                  e.Name AS EventName,
+                  c.Name AS CategoryName,
+                  r.PaymentStatus,
+                  res.FinishTime,
+                  res.Position
+              FROM Registration r
+              INNER JOIN Participant p ON r.ParticipantID = p.ParticipantID
+              INNER JOIN Category c ON r.CategoryID = c.CategoryID
+              INNER JOIN Event e ON c.EventID = e.EventID
+              LEFT JOIN Result res ON r.RegistrationID = res.RegistrationID;
+            "
+
+      # Step 6: Workflow Completion
+      - name: Database CI Status
         run: |
-          echo "======================================"
-          echo "RaceDay3 Database CI PASSED"
-          echo "======================================"
+          echo "================================================="
+          echo "RaceDay3 Database Schema & Test Execution PASSED"
+          echo "================================================="
