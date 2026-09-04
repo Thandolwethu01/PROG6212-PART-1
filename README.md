@@ -1,7 +1,7 @@
 # PROG6212-PART-1
 # 🏃‍♂️ RaceDay 3 - Database & API Infrastructure
 
-![RaceDay Database CI/CD](https://github.com/YOUR_USERNAME/RaceDay3/actions/workflows/raceday-ci.yml/badge.svg)
+![RaceDay Database CI/CD](workflow.png)
 ![SQL Server](https://img.shields.io/badge/Database-MSSQL%202022-blue)
 ![Platform](https://img.shields.io/badge/Platform-GitHub%20Actions-lightgrey)
 
